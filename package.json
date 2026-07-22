@@ -1,0 +1,27 @@
+{
+  "name": "sbom-nextjs-app",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "node scripts/next-with-env.cjs dev",
+    "build": "next build --webpack",
+    "start": "node scripts/next-with-env.cjs start",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "eslint": "latest",
+    "eslint-config-next": "latest",
+    "postcss": "^8.5.21",
+    "tailwindcss": "^4.3.3",
+    "typescript": "latest"
+  }
+}
