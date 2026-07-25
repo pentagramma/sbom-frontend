@@ -1,4 +1,4 @@
-# 21-Day Thin Slice Roadmap
+# 21-Day Roadmap
 
 **Sprint:** 21 days, started July 22, 2026. **Demo sentence (day 21):** paste an npm GitHub repo URL, scan runs with visible status, components table renders with pagination, download a valid CycloneDX file. **Team:** Dev A = frontend (React), Dev B = backend (API, queue, worker, Postgres). Lakshay = architecture, contracts, testing, demo. **Shared artifacts:** API contract (mvp-api-contract-v1.md), schema (mvp-schema-v1.sql). The contract is the single source of truth; any deviation gets fixed in the doc, not just in code.
 
