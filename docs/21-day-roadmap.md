@@ -4,7 +4,7 @@
 
 ## Architecture
 
-![Architecture: Browser React app → REST API → BullMQ queue on Redis → worker (clone repo, run Syft) → Postgres and SBOM file storage, with Keycloak for auth](architecture.webp)
+![Architecture: Browser React app → REST API → BullMQ queue on Redis → worker (clone repo, run Syft) → Postgres and SBOM file storage, with Keycloak for auth](architecture.png)
 
 ---
 
