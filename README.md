@@ -7,20 +7,28 @@ Monorepo for the SBOM compliance platform.
 - `frontend/` — Next.js UI (App Router, TypeScript, Tailwind)
 - `backend/` — Express API plus BullMQ worker (in progress)
 - `docs/` — API contract and database schema
-- `docker-compose.yml` — runs everything: Postgres, Redis, API, worker, and frontend
+- `docker-compose.yml` — Postgres + Redis for local dev (the `api`/`worker`/
+  `frontend` services are declared for later but have no Dockerfiles yet, so
+  those run on the host for now)
 
 ## Getting started
 
-Copy `frontend/.env.example` to `frontend/.env` and adjust as needed, then:
+Backend (API + worker + database): follow **[`backend/README.md`](backend/README.md)**
+— it has full setup, run, and troubleshooting instructions. In short:
 
 ```bash
-docker compose up
+cp .env.example .env                     # defaults work out of the box
+docker compose up -d postgres redis      # infra only
+cd backend && npm install
+npm run api                              # terminal 1
+npm run worker                           # terminal 2
 ```
 
-Or run the frontend on its own:
+Frontend:
 
 ```bash
 cd frontend
+cp .env.example .env
 npm install
 npm run dev
 ```

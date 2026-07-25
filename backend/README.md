@@ -26,12 +26,27 @@ then `up -d` again.
 
 ## Run
 
-In two terminals, from `backend/`:
+The API and worker run on the host (there are no Dockerfiles for them yet).
+Run **exactly one of each**, in its own terminal, and leave both open — they
+stream logs. Postgres and Redis stay running in the background from `up -d`.
 
 ```sh
-npm run api        # Express on :3001 (API_PORT)
-npm run worker     # BullMQ consumer
+# terminal 1, from backend/
+npm run api        # Express on :3001 (API_PORT); prints "api listening on :3001"
+
+# terminal 2, from backend/
+npm run worker     # BullMQ consumer; prints "worker listening on queue \"scans\""
 ```
+
+Config comes from environment variables, but the code defaults
+(`localhost:5433` Postgres, `localhost:6379` Redis) already match the compose
+setup, so `npm run api` / `npm run worker` work with no extra steps. Only if you
+change `.env` from the defaults do you need to export it into these shells
+(e.g. `set -a && . ../.env && set +a` before the `npm run` command).
+
+> Run only **one** API and **one** worker. Two APIs fight over port 3001
+> (`EADDRINUSE`); two workers both consume the same queue, so a job's logs land
+> in whichever one happened to grab it — making the other terminal look dead.
 
 The worker is a placeholder: it probes the repo URL for reachability, then
 walks the status enum `queued → cloning → scanning → enriching → completed`
@@ -77,6 +92,34 @@ $ curl -s localhost:3001/api/v1/scans/scn_deadbeef
 # nonexistent repo -> worker marks the scan failed:
 {"id":"scn_d20ec2de","status":"failed","phase":2,"phaseCount":5,...,"error":"Repository could not be cloned. It may be private or the URL may be invalid."}
 ```
+
+## Troubleshooting
+
+**`Cannot connect to the Docker daemon` / `dial unix /var/run/docker.sock:
+connect: no such file or directory`** — your Docker VM isn't running. With
+colima: `colima start`, then confirm `colima status` says running and
+`docker context show` prints `colima` (colima removes that context when it
+stops, so the CLI falls back to a socket that doesn't exist). Re-run the
+`docker compose up -d` afterward.
+
+**Tables don't exist / `relation "scans" does not exist`** — the schema is only
+applied on the **first** boot of a fresh Postgres volume. If the volume predates
+the schema, reset it: `docker compose down -v && docker compose up -d postgres redis`.
+(`-v` deletes the data volume, so all scans are lost.)
+
+**`EADDRINUSE: address already in use :::3001`** — an API is already running
+(possibly a stray background one). Find and stop it:
+`lsof -iTCP:3001 -sTCP:LISTEN -P -n`, then `kill <pid>`.
+
+**Worker terminal shows nothing after a POST** — either no worker is running, or
+a *second* worker grabbed the job. Check with `ps aux | grep "tsx src/worker"`;
+there should be exactly one.
+
+**Repo on an external drive / outside `$HOME` (e.g. `/Volumes/...`)** — the
+compose file bind-mounts `docs/mvp-schema-v1.sql` into Postgres, so your Docker
+VM must mount that path. colima mounts `$HOME` by default; for other paths start
+it with the mount, e.g. `colima start --mount /Volumes/YourDrive:w`. Verify with
+`colima ssh -- ls <repo>/docs/mvp-schema-v1.sql`.
 
 ## Not in this slice (days 6–10)
 
