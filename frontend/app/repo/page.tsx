@@ -2,8 +2,10 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import type { ChangeEvent, ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
+import { createScan, ScanApiError } from "../lib/scan-api";
 
 type RepoInfo = {
   full_name: string;
@@ -48,9 +50,10 @@ type PackageJsonState =
   | { status: "missing" }
   | { status: "error"; message: string };
 
-type ScanPhase = "idle" | "queued" | "cloning" | "scanning" | "enriching" | "completed";
-
-const scanPhases: ScanPhase[] = ["queued", "cloning", "scanning", "enriching", "completed"];
+type SubmitState =
+  | { status: "idle" }
+  | { status: "submitting" }
+  | { status: "error"; message: string };
 
 function parseGithubRepo(input: string) {
   const trimmed = input.trim();
@@ -131,45 +134,33 @@ async function fetchPackageJson(
 }
 
 export default function RepoLookupPage() {
+  const router = useRouter();
   const [query, setQuery] = useState("");
-  const [phase, setPhase] = useState<ScanPhase>("idle");
   const [state, setState] = useState<RepoState>({ status: "idle" });
   const [packageJsonState, setPackageJsonState] = useState<PackageJsonState>({
     status: "idle"
   });
+  const [submitState, setSubmitState] = useState<SubmitState>({ status: "idle" });
 
   const parsed = useMemo(() => parseGithubRepo(query), [query]);
 
-  function handleQueryChange(event: ChangeEvent<HTMLInputElement>) {
-    const nextQuery = event.target.value;
-    const nextParsed = parseGithubRepo(nextQuery);
+  useEffect(() => {
+    const repoRef = parsed;
+    setSubmitState({ status: "idle" });
 
-    setQuery(nextQuery);
-
-    if (!nextQuery.trim() || !nextParsed) {
-      setPhase("idle");
+    if (!repoRef) {
       setState({ status: "idle" });
       setPackageJsonState({ status: "idle" });
       return;
     }
 
-    setPhase("queued");
-    setState({ status: "loading" });
-    setPackageJsonState({ status: "loading" });
-  }
-
-  useEffect(() => {
-    const repoRef = parsed;
-
-    if (!repoRef) {
-      return;
-    }
-
     const { owner, repo } = repoRef;
     const controller = new AbortController();
-    const timeoutIds: number[] = [];
 
     async function loadRepo() {
+      setState({ status: "loading" });
+      setPackageJsonState({ status: "loading" });
+
       try {
         const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
           signal: controller.signal,
@@ -198,9 +189,7 @@ export default function RepoLookupPage() {
           message: error instanceof Error ? error.message : "Unable to load repository."
         });
       }
-    }
 
-    async function loadPackageJson() {
       try {
         const packageJsonResult = await fetchPackageJson(owner, repo, controller.signal);
         setPackageJsonState(packageJsonResult);
@@ -216,31 +205,36 @@ export default function RepoLookupPage() {
       }
     }
 
-    const phaseTimings = [
-      { phase: "cloning" as const, delay: 1500 },
-      { phase: "scanning" as const, delay: 3000 },
-      { phase: "enriching" as const, delay: 4500 },
-      { phase: "completed" as const, delay: 6000 }
-    ];
-
-    timeoutIds.push(window.setTimeout(loadRepo, 100));
-    timeoutIds.push(window.setTimeout(loadPackageJson, 100));
-
-    phaseTimings.forEach(({ phase: nextPhase, delay }) => {
-      timeoutIds.push(
-        window.setTimeout(() => {
-          setPhase(nextPhase);
-        }, delay)
-      );
-    });
+    // Debounce so we don't hit GitHub on every keystroke.
+    const timeoutId = window.setTimeout(loadRepo, 350);
 
     return () => {
       controller.abort();
-      timeoutIds.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      window.clearTimeout(timeoutId);
     };
   }, [parsed]);
 
-  const showStatusScreen = phase !== "idle" && phase !== "completed";
+  // The confirm step: metadata card first, scan starts only on click.
+  async function handleScan() {
+    if (!parsed || submitState.status === "submitting") {
+      return;
+    }
+
+    setSubmitState({ status: "submitting" });
+
+    try {
+      const scan = await createScan(`https://github.com/${parsed.owner}/${parsed.repo}`);
+      router.push(`/scans/${scan.id}`);
+    } catch (error) {
+      setSubmitState({
+        status: "error",
+        message:
+          error instanceof ScanApiError
+            ? error.message
+            : "Could not start the scan. Is the API running?"
+      });
+    }
+  }
 
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100">
@@ -256,7 +250,7 @@ export default function RepoLookupPage() {
             <span className="mb-2 block text-sm font-medium text-slate-200">Repository link</span>
             <input
               value={query}
-              onChange={handleQueryChange}
+              onChange={(event) => setQuery(event.target.value)}
               placeholder="https://github.com/vercel/next.js"
               className="h-12 w-full rounded-xl border border-white/10 bg-slate-900/80 px-4 text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/20"
             />
@@ -271,10 +265,10 @@ export default function RepoLookupPage() {
           <div className="rounded-3xl border border-amber-500/20 bg-amber-500/10 p-8 text-amber-100">
             Enter a valid GitHub repository link or an <code>owner/repo</code> value.
           </div>
-        ) : showStatusScreen ? (
-          <StatusScreen phase={phase} />
         ) : state.status === "loading" ? (
-          <StatusScreen phase="completed" />
+          <div className="rounded-3xl border border-white/10 bg-white/5 p-8 text-slate-300">
+            Loading repository details...
+          </div>
         ) : state.status === "error" ? (
           <div className="rounded-3xl border border-red-500/20 bg-red-500/10 p-8 text-red-100">
             {state.message}
@@ -304,14 +298,31 @@ export default function RepoLookupPage() {
               </div>
 
               <div className="min-w-0 flex-1">
-                <Link
-                  href={state.repo.html_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-2xl font-semibold tracking-tight text-slate-50 hover:text-cyan-300"
-                >
-                  {state.repo.full_name}
-                </Link>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <Link
+                    href={state.repo.html_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-2xl font-semibold tracking-tight text-slate-50 hover:text-cyan-300"
+                  >
+                    {state.repo.full_name}
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={handleScan}
+                    disabled={submitState.status === "submitting"}
+                    className="rounded-xl border border-cyan-400/40 bg-cyan-400/10 px-5 py-2.5 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {submitState.status === "submitting" ? "Starting scan..." : "Scan repository"}
+                  </button>
+                </div>
+
+                {submitState.status === "error" ? (
+                  <p className="mt-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2 text-sm text-red-100">
+                    {submitState.message}
+                  </p>
+                ) : null}
+
                 <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
                   {state.repo.description ?? "No description provided."}
                 </p>
@@ -353,77 +364,6 @@ export default function RepoLookupPage() {
         ) : null}
       </section>
     </main>
-  );
-}
-
-function StatusScreen({ phase }: { phase: ScanPhase }) {
-  const currentIndex = Math.max(scanPhases.indexOf(phase), 0);
-
-  return (
-    <section className="overflow-hidden rounded-3xl border border-white/10 bg-white/5 p-8 shadow-2xl">
-      <div className="mx-auto flex max-w-2xl flex-col items-center text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-300">
-          <svg viewBox="0 0 24 24" fill="none" className="h-8 w-8">
-            <path
-              d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48 2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48 2.83-2.83"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-            />
-          </svg>
-        </div>
-
-        <p className="mt-5 text-sm uppercase tracking-[0.3em] text-cyan-300/80">Scanning</p>
-        <h2 className="mt-2 text-3xl font-semibold tracking-tight text-slate-50">
-          Preparing repository analysis
-        </h2>
-        <p className="mt-3 text-sm text-slate-300">
-          Please wait while we inspect the repository and package manifest.
-        </p>
-
-        <div className="mt-8 w-full rounded-3xl border border-white/10 bg-slate-950/70 p-4">
-          <div className="flex flex-wrap items-center justify-center gap-3 text-sm">
-            {scanPhases.map((item, index) => {
-              const isActive = index === currentIndex;
-              const isDone = index < currentIndex;
-              const isQueued = item === "queued";
-
-              return (
-                <div
-                  key={item}
-                  className={[
-                    "flex items-center gap-2 rounded-full border px-4 py-2 capitalize transition",
-                    isActive
-                      ? "border-cyan-400/40 bg-cyan-400/10 text-cyan-200"
-                      : isDone
-                        ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
-                        : "border-white/10 bg-white/5 text-slate-400"
-                  ].join(" ")}
-                >
-                  <span
-                    className={[
-                      "h-2.5 w-2.5 rounded-full",
-                      isActive
-                        ? "bg-cyan-300"
-                        : isDone
-                          ? "bg-emerald-300"
-                          : isQueued
-                            ? "bg-slate-500"
-                            : "bg-slate-600"
-                    ].join(" ")}
-                  />
-                  {item}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <p className="mt-6 text-sm text-slate-400">
-          Current stage: <span className="text-slate-200">{phase}</span>
-        </p>
-      </div>
-    </section>
   );
 }
 
