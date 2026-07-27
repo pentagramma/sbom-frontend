@@ -246,15 +246,36 @@ export default function RepoLookupPage() {
             Paste a GitHub repo URL or `owner/repo`. The page fetches metadata automatically.
           </p>
 
-          <label className="mt-6 block">
-            <span className="mb-2 block text-sm font-medium text-slate-200">Repository link</span>
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="https://github.com/vercel/next.js"
-              className="h-12 w-full rounded-xl border border-white/10 bg-slate-900/80 px-4 text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/20"
-            />
-          </label>
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-end">
+            <label className="block flex-1">
+              <span className="mb-2 block text-sm font-medium text-slate-200">Repository link</span>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="https://github.com/vercel/next.js"
+                className="h-12 w-full rounded-xl border border-white/10 bg-slate-900/80 px-4 text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-400/20"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={handleScan}
+              disabled={state.status !== "success" || submitState.status === "submitting"}
+              title={
+                state.status !== "success"
+                  ? "Paste a repository link and wait for its details to load"
+                  : undefined
+              }
+              className="h-12 shrink-0 rounded-xl border border-cyan-400/40 bg-cyan-400/10 px-6 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {submitState.status === "submitting" ? "Starting scan..." : "Scan repository"}
+            </button>
+          </div>
+
+          {submitState.status === "error" ? (
+            <p className="mt-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2 text-sm text-red-100">
+              {submitState.message}
+            </p>
+          ) : null}
         </header>
 
         {!query ? (
@@ -298,30 +319,14 @@ export default function RepoLookupPage() {
               </div>
 
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-start justify-between gap-4">
-                  <Link
-                    href={state.repo.html_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-2xl font-semibold tracking-tight text-slate-50 hover:text-cyan-300"
-                  >
-                    {state.repo.full_name}
-                  </Link>
-                  <button
-                    type="button"
-                    onClick={handleScan}
-                    disabled={submitState.status === "submitting"}
-                    className="rounded-xl border border-cyan-400/40 bg-cyan-400/10 px-5 py-2.5 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {submitState.status === "submitting" ? "Starting scan..." : "Scan repository"}
-                  </button>
-                </div>
-
-                {submitState.status === "error" ? (
-                  <p className="mt-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2 text-sm text-red-100">
-                    {submitState.message}
-                  </p>
-                ) : null}
+                <Link
+                  href={state.repo.html_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-2xl font-semibold tracking-tight text-slate-50 hover:text-cyan-300"
+                >
+                  {state.repo.full_name}
+                </Link>
 
                 <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
                   {state.repo.description ?? "No description provided."}
