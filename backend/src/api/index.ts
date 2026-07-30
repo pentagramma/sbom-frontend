@@ -1,3 +1,12 @@
+// ---------------------------------------------------------------------------
+// The API process. It is the HTTP front door — the only thing the frontend
+// talks to. It does NO scanning itself; its whole job is:
+//   POST /scans    -> validate, save a `queued` row, drop a job on the queue
+//   GET  /scans/:id -> read that row back for the frontend's status polling
+// The actual work happens later in the WORKER process (src/worker/index.ts),
+// which shares the same DB and queue. Shapes here follow docs/mvp-api-contract-v1.md.
+// ---------------------------------------------------------------------------
+
 import express from 'express';
 import { Queue } from 'bullmq';
 import { query } from '../db/index.js';
@@ -6,8 +15,9 @@ import { PHASE_COUNT } from '../shared/status.js';
 import { SCAN_QUEUE, redisConnection, type ScanJobData } from '../shared/queue.js';
 
 const app = express();
-app.use(express.json());
+app.use(express.json()); // parse JSON request bodies into req.body
 
+// Our handle to the Redis queue. `.add()` here is picked up by the worker.
 const scanQueue = new Queue<ScanJobData>(SCAN_QUEUE, {
   connection: redisConnection(),
 });
@@ -27,7 +37,9 @@ function errorBody(code: string, message: string) {
   return { error: { code, message } };
 }
 
-// Accepts GitHub/GitLab repo URLs of the form https://<host>/<owner>/<repo>[.git]
+// Gate at the door: only accept GitHub/GitLab repo URLs of the form
+// https://<host>/<owner>/<repo>[.git]. Anything else is rejected before we
+// touch the DB or queue.
 function isValidRepoUrl(repoUrl: unknown): repoUrl is string {
   if (typeof repoUrl !== 'string') return false;
   let url: URL;
@@ -43,6 +55,9 @@ function isValidRepoUrl(repoUrl: unknown): repoUrl is string {
   return segments.length >= 2 && segments.every((s) => s.length > 0);
 }
 
+// Start a scan. Order matters: validate -> save row -> enqueue job. The row is
+// written FIRST (as `queued`) so the scan exists in the DB the instant we reply,
+// before the worker has touched it. Returns 202 (accepted, not done).
 app.post('/api/v1/scans', async (req, res) => {
   const { repoUrl } = req.body ?? {};
   if (!isValidRepoUrl(repoUrl)) {
@@ -52,6 +67,8 @@ app.post('/api/v1/scans', async (req, res) => {
     return;
   }
 
+  // 1. Save the scan as `queued`. Reusing the id as the BullMQ jobId (below)
+  //    keeps scan and job traceable as one thing.
   const id = newScanId();
   const { rows } = await query<ScanRow>(
     `INSERT INTO scans (id, repo_url, status, phase, phase_count)
@@ -60,6 +77,7 @@ app.post('/api/v1/scans', async (req, res) => {
     [id, repoUrl, PHASE_COUNT],
   );
 
+  // 2. Hand the job to the worker via Redis. This is the API's last involvement.
   await scanQueue.add('scan', { scanId: id, repoUrl }, { jobId: id });
 
   res.status(202).json({
@@ -70,6 +88,9 @@ app.post('/api/v1/scans', async (req, res) => {
   });
 });
 
+// Read a scan back. This is what the frontend polls every few seconds to show
+// live status. It is a plain read of the row the worker keeps updating — no
+// logic, so it works the same whether the scan is in progress, done, or failed.
 app.get('/api/v1/scans/:id', async (req, res) => {
   const { id } = req.params;
   const { rows } = await query<ScanRow>('SELECT * FROM scans WHERE id = $1', [id]);
@@ -91,6 +112,9 @@ app.get('/api/v1/scans/:id', async (req, res) => {
   });
 });
 
+// Catch-all safety net: any error thrown in a handler above ends up here and
+// becomes a clean 500, instead of crashing the process. (The 4-argument shape
+// is how Express recognises error-handling middleware.)
 app.use(
   (err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     console.error(err);

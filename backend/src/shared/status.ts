@@ -1,5 +1,7 @@
-// Ordered progress statuses per docs/mvp-api-contract-v1.md; `failed` is
-// terminal and reachable from any of them.
+// The scan lifecycle, in one place, shared by the API and worker so they never
+// disagree. Order is meaningful — the worker walks the list top to bottom.
+// Per docs/mvp-api-contract-v1.md; `failed` is terminal and reachable from any
+// of these.
 export const PROGRESS_STATUSES = [
   'queued',
   'cloning',
