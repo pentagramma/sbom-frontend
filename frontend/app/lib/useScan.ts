@@ -24,7 +24,8 @@ function intervalFor(elapsedMs: number): number {
 export type ScanPollState =
   | { status: "loading" }
   | { status: "polling"; scan: Scan }
-  | { status: "settled"; scan: Scan }
+  | { status: "completed"; scan: Scan }
+  | { status: "failed"; scan: Scan }
   | { status: "error"; code: string; message: string };
 
 export function useScan(scanId: string | null): ScanPollState {
@@ -38,17 +39,27 @@ export function useScan(scanId: string | null): ScanPollState {
 
     let cancelled = false;
     let timeoutId: number | undefined;
+    let initialized = false;
     startedAt.current = Date.now();
-    setState({ status: "loading" });
 
     async function poll() {
+      if (!initialized) {
+        initialized = true;
+        setState({ status: "loading" });
+      }
+
       try {
         const scan = await getScan(scanId!);
 
         if (cancelled) return;
 
-        if (scan.status === "completed" || scan.status === "failed") {
-          setState({ status: "settled", scan });
+        if (scan.status === "completed") {
+          setState({ status: "completed", scan });
+          return;
+        }
+
+        if (scan.status === "failed") {
+          setState({ status: "failed", scan });
           return;
         }
 
