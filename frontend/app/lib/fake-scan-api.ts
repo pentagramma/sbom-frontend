@@ -10,7 +10,7 @@
 // Failure path: any repo URL containing "fail" fails at the cloning phase with
 // the contract's example error, so the failed UI is exercisable on demand.
 
-import type { CreateScanResponse, Scan } from "./scan-api";
+import type { CreateScanRequest, CreateScanResponse, Scan } from "./scan-api";
 import { ScanApiError, SCAN_PROGRESS_STATUSES } from "./scan-api";
 
 const PHASE_MS = 3000;
@@ -31,7 +31,9 @@ function newScanId(): string {
   return `scn_${hex}`;
 }
 
-export async function fakeCreateScan(repoUrl: string): Promise<CreateScanResponse> {
+export async function fakeCreateScan({
+  repoUrl
+}: CreateScanRequest): Promise<CreateScanResponse> {
   if (!/^https?:\/\/(www\.)?(github|gitlab)\.com\/[^/]+\/[^/]+/.test(repoUrl)) {
     throw new ScanApiError(
       "INVALID_REPO_URL",
