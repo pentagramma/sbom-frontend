@@ -46,7 +46,7 @@ export default function ScanStatusPage() {
         ) : (
           <>
             <ScanProgress scan={state.scan} />
-            {state.status === "settled" && state.scan.status === "completed" ? (
+            {state.status === "completed" ? (
               <div className="rounded-3xl border border-emerald-400/20 bg-emerald-400/5 p-6 text-sm text-emerald-100">
                 Components table and CycloneDX download land here in days 6-10
                 (GET /scans/:id/components and /export per the contract).

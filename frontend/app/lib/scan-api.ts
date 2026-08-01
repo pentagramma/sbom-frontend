@@ -37,6 +37,10 @@ export type CreateScanResponse = {
   createdAt: string;
 };
 
+export type CreateScanRequest = {
+  repoUrl: string;
+};
+
 export class ScanApiError extends Error {
   constructor(
     public code: string,
@@ -67,9 +71,11 @@ async function parseError(response: Response): Promise<never> {
   throw new ScanApiError(code, message);
 }
 
-export async function createScan(repoUrl: string): Promise<CreateScanResponse> {
+export async function createScan({
+  repoUrl
+}: CreateScanRequest): Promise<CreateScanResponse> {
   if (!API_BASE) {
-    return fakeCreateScan(repoUrl);
+    return fakeCreateScan({ repoUrl });
   }
 
   const response = await fetch(`${API_BASE}/api/v1/scans`, {
