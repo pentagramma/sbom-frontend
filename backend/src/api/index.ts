@@ -14,6 +14,7 @@ import { newScanId } from '../shared/ids.js';
 import { PHASE_COUNT } from '../shared/status.js';
 import { SCAN_QUEUE, redisConnection, type ScanJobData } from '../shared/queue.js';
 
+
 const app = express();
 app.use(express.json()); // parse JSON request bodies into req.body
 
@@ -21,6 +22,7 @@ app.use(express.json()); // parse JSON request bodies into req.body
 const scanQueue = new Queue<ScanJobData>(SCAN_QUEUE, {
   connection: redisConnection(),
 });
+
 
 interface ScanRow {
   id: string;
@@ -32,6 +34,7 @@ interface ScanRow {
   created_at: Date;
   updated_at: Date;
 }
+
 
 function errorBody(code: string, message: string) {
   return { error: { code, message } };
@@ -58,6 +61,8 @@ function isValidRepoUrl(repoUrl: unknown): repoUrl is string {
 // Start a scan. Order matters: validate -> save row -> enqueue job. The row is
 // written FIRST (as `queued`) so the scan exists in the DB the instant we reply,
 // before the worker has touched it. Returns 202 (accepted, not done).
+// TODO: Submitting the same repoUrl multiple times creates a new scan each time
+// with a new id, running the full clone and scan pipeline again for every request.
 app.post('/api/v1/scans', async (req, res) => {
   const { repoUrl } = req.body ?? {};
   if (!isValidRepoUrl(repoUrl)) {
@@ -80,6 +85,7 @@ app.post('/api/v1/scans', async (req, res) => {
   // 2. Hand the job to the worker via Redis. This is the API's last involvement.
   await scanQueue.add('scan', { scanId: id, repoUrl }, { jobId: id });
 
+
   res.status(202).json({
     id,
     status: 'queued',
@@ -99,6 +105,7 @@ app.get('/api/v1/scans/:id', async (req, res) => {
     return;
   }
 
+
   const row = rows[0];
   res.json({
     id: row.id,
@@ -112,6 +119,68 @@ app.get('/api/v1/scans/:id', async (req, res) => {
   });
 });
 
+
+interface ScanComponentRow {
+  id: string;
+  name: string;
+  version: string;
+  type: string;
+  purl: string;
+  licenses: string[];
+  direct: boolean;
+}
+
+
+app.get('/api/v1/scans/:id/components', async (req, res) => {
+  const { id } = req.params;
+
+
+  const { rows: scanRows } = await query<Pick<ScanRow, 'status'>>(
+    'SELECT status FROM scans WHERE id = $1',
+    [id],
+  );
+  if (scanRows.length === 0) {
+    res.status(404).json(errorBody('SCAN_NOT_FOUND', `No scan with id ${id}`));
+    return;
+  }
+  if (scanRows[0].status !== 'completed') {
+    res.status(409).json(errorBody('SCAN_NOT_COMPLETE', `Scan ${id} has not completed yet`));
+    return;
+  }
+
+
+  const page = Math.max(1, Math.trunc(Number(req.query.page)) || 1);
+  const limit = Math.min(200, Math.max(1, Math.trunc(Number(req.query.limit)) || 50));
+  const offset = (page - 1) * limit;
+
+
+  const { rows: countRows } = await query<{ count: string }>(
+    'SELECT COUNT(*) FROM scan_components WHERE scan_id = $1',
+    [id],
+  );
+  const total = Number(countRows[0].count);
+
+
+  const { rows } = await query<ScanComponentRow>(
+    `SELECT c.id, c.name, c.version, c.type, c.purl, c.licenses, sc.direct
+     FROM scan_components sc
+     JOIN components c ON c.id = sc.component_id
+     WHERE sc.scan_id = $1
+     ORDER BY c.name
+     LIMIT $2 OFFSET $3`,
+    [id, limit, offset],
+  );
+
+
+  res.json({
+    scanId: id,
+    page,
+    limit,
+    total,
+    components: rows,
+  });
+});
+
 // Catch-all safety net: any error thrown in a handler above ends up here and
 // becomes a clean 500, instead of crashing the process. (The 4-argument shape
 // is how Express recognises error-handling middleware.)
@@ -121,6 +190,7 @@ app.use(
     res.status(500).json(errorBody('INTERNAL_ERROR', 'Unexpected server error'));
   },
 );
+
 
 const port = Number(process.env.API_PORT ?? 3001);
 app.listen(port, () => {

@@ -9,19 +9,22 @@
 //
 //     queued -> cloning -> scanning -> enriching -> completed   (or -> failed)
 //
-// IMPORTANT: the work inside each status is currently a PLACEHOLDER (a sleep +
-// a reachability check). The status machine, failure handling, timeout, and
-// crash recovery below are real and done. The Syft ticket replaces only the
-// placeholder work in `processScan` — see the note there.
 // ---------------------------------------------------------------------------
 
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import * as CDX from '@cyclonedx/cyclonedx-library';
 import { Worker, type Job } from 'bullmq';
 import { query } from '../db/index.js';
-import { PROGRESS_STATUSES, phaseOf, type ProgressStatus } from '../shared/status.js';
+import { newComponentId } from '../shared/ids.js';
+import { phaseOf, type ProgressStatus } from '../shared/status.js';
 import { SCAN_QUEUE, JOB_TIMEOUT_MS, redisConnection, type ScanJobData } from '../shared/queue.js';
+import { runCommand, ExecTimeoutError } from './exec.js';
 
-// How long to pretend each placeholder phase takes. Real work replaces this.
-const PHASE_DELAY_MS = Number(process.env.SCAN_PHASE_DELAY_MS ?? 3000);
+
+const GIT_CLONE_TIMEOUT_MS = Number(process.env.GIT_CLONE_TIMEOUT_MS ?? 60_000);
+const SYFT_TIMEOUT_MS = Number(process.env.SYFT_TIMEOUT_MS ?? 120_000);
 
 // Two kinds of failure exist. A `ScanError` carries a message we are happy to
 // show the user (e.g. "repo could not be cloned"). Any OTHER error is treated
@@ -41,46 +44,183 @@ async function setStatus(scanId: string, status: ProgressStatus): Promise<void> 
   );
 }
 
-// PLACEHOLDER standing in for the real `git clone`. For now we only check the
-// repo page is reachable; the Syft ticket replaces this with an actual shallow
-// clone. Note the pattern to keep: on failure, throw a `ScanError` with a
-// user-safe message.
-async function checkRepoReachable(repoUrl: string): Promise<void> {
-  let ok = false;
+// Shallow clone into destDir as a child process with its own timeout,
+// separate from the overall 30-minute BullMQ job timeout.
+async function cloneRepo(repoUrl: string, destDir: string): Promise<void> {
   try {
-    const res = await fetch(repoUrl, {
-      method: 'HEAD',
-      redirect: 'follow',
-      signal: AbortSignal.timeout(10_000),
+    await runCommand('git', ['clone', '--depth', '1', '--quiet', repoUrl, destDir], {
+      timeoutMs: GIT_CLONE_TIMEOUT_MS,
     });
-    ok = res.ok;
   } catch {
-    ok = false;
-  }
-  if (!ok) {
     throw new ScanError(
       'Repository could not be cloned. It may be private or the URL may be invalid.',
     );
   }
 }
 
+// Runs Syft against the cloned directory, returning the raw CycloneDX JSON
+// text. Own timeout, independent of the git clone and job timeouts.
+async function runSyft(dir: string): Promise<string> {
+  try {
+    const { stdout } = await runCommand('syft', [dir, '-o', 'cyclonedx-json'], {
+      timeoutMs: SYFT_TIMEOUT_MS,
+    });
+    return stdout;
+  } catch (err) {
+    if (err instanceof ExecTimeoutError) {
+      throw new ScanError('SBOM generation timed out.');
+    }
+    throw new ScanError('SBOM generation failed.');
+  }
+}
+
+interface CycloneDxLicense {
+  license?: { id?: string; name?: string };
+  expression?: string;
+}
+
+interface CycloneDxComponent {
+  name: string;
+  version?: string;
+  type?: string;
+  purl?: string;
+  licenses?: CycloneDxLicense[];
+}
+
+interface CycloneDxDocument {
+  bomFormat?: string;
+  specVersion?: string;
+  components?: CycloneDxComponent[];
+}
+
+// Syft's cyclonedx-json output is plain JSON matching a stable, known shape,
+// so a full model deserializer isn't needed -- we just read the fields we
+// store. (@cyclonedx/cyclonedx-library has no JSON->Bom deserializer; it's
+// built for constructing/serializing/validating BOMs, not parsing them.)
+function parseCycloneDxDocument(rawJson: string): CycloneDxDocument {
+  let doc: CycloneDxDocument;
+  try {
+    doc = JSON.parse(rawJson);
+  } catch {
+    throw new ScanError('Syft produced output that could not be parsed as JSON.');
+  }
+  if (doc.bomFormat !== 'CycloneDX' || !Array.isArray(doc.components)) {
+    throw new ScanError('Syft produced an unexpected CycloneDX document shape.');
+  }
+  return doc;
+}
+
+const SPEC_BY_VERSION: Record<string, {version: string}> = {
+  '1.2': CDX.Spec.Spec1dot2,
+  '1.3': CDX.Spec.Spec1dot3,
+  '1.4': CDX.Spec.Spec1dot4,
+  '1.5': CDX.Spec.Spec1dot5,
+  '1.6': CDX.Spec.Spec1dot6,
+};
+
+// Best-effort validation against the CycloneDX spec using the official
+// library. Deliberately non-fatal: an unrecognized spec version or a missing
+// optional peer dep (ajv) just skips/warns rather than failing the scan.
+async function validateCycloneDx(rawJson: string, specVersion: string | undefined): Promise<void> {
+  const spec = specVersion ? SPEC_BY_VERSION[specVersion] : undefined;
+  if (!spec) return;
+  try {
+    const validator = new CDX.Validation.JsonStrictValidator(spec.version);
+    const errors = await validator.validate(rawJson);
+    if (errors !== null) {
+      console.warn('CycloneDX validation warnings:', JSON.stringify(errors));
+    }
+  } catch (err) {
+    if (err instanceof CDX.Validation.MissingOptionalDependencyError) {
+      console.warn('CycloneDX JSON validation skipped: optional dependency missing');
+      return;
+    }
+    console.warn('CycloneDX JSON validation error:', err);
+  }
+}
+
+function extractLicenses(comp: CycloneDxComponent): string[] {
+  if (!comp.licenses) return [];
+  const names: string[] = [];
+  for (const entry of comp.licenses) {
+    if (entry.license?.id) names.push(entry.license.id);
+    else if (entry.license?.name) names.push(entry.license.name);
+    else if (entry.expression) names.push(entry.expression);
+  }
+  return names;
+}
+
+interface ComponentRow {
+  id: string;
+}
+
+// Upserts by purl: a fresh id is only used if the component is new; on
+// conflict, Postgres returns the existing row's id instead.
+async function upsertComponent(comp: CycloneDxComponent): Promise<string | null> {
+  if (!comp.purl || !comp.version) return null; // schema requires both; skip unresolvable components
+  const id = newComponentId();
+  const { rows } = await query<ComponentRow>(
+    `INSERT INTO components (id, purl, name, version, type, licenses)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (purl) DO UPDATE
+       SET name = EXCLUDED.name, version = EXCLUDED.version, type = EXCLUDED.type, licenses = EXCLUDED.licenses
+     RETURNING id`,
+    [id, comp.purl, comp.name, comp.version, comp.type ?? 'library', extractLicenses(comp)],
+  );
+  return rows[0].id;
+}
+
+// Links every parsed component to this scan. `direct` is hardcoded true for
+// now -- real direct/transitive detection needs Syft's dependency graph,
+// deferred to a later pass.
+async function storeComponents(scanId: string, doc: CycloneDxDocument): Promise<void> {
+  for (const comp of doc.components ?? []) {
+    const componentId = await upsertComponent(comp);
+    if (!componentId) continue;
+    await query(
+      `INSERT INTO scan_components (scan_id, component_id, direct, found_by)
+       VALUES ($1, $2, $3, 'syft')
+       ON CONFLICT DO NOTHING`,
+      [scanId, componentId, true],
+    );
+  }
+}
+
+
+
 // The heart of the worker: run one scan from start to finish.
 //
 // >>> THIS IS WHERE THE SYFT TICKET LANDS. <<<
-// The loop below is the placeholder: it walks each status and sleeps. Keep the
-// `setStatus` calls, but replace the sleeps with real work per phase:
 //   cloning   -> git clone --depth 1 (replaces checkRepoReachable)
 //   scanning  -> run syft, get CycloneDX JSON
 //   enriching -> parse, upsert components, write scan_components, save raw_output
 // Anything that can go wrong for a user reason should `throw new ScanError(...)`.
 async function processScan(job: Job<ScanJobData>): Promise<void> {
   const { scanId, repoUrl } = job.data;
-  for (const status of PROGRESS_STATUSES) {
-    if (status === 'queued') continue; // already set by the API when it inserted the row
-    await setStatus(scanId, status); // announce this phase in the DB before doing its work
-    console.log(`${scanId}: ${status}`);
-    if (status === 'cloning') await checkRepoReachable(repoUrl);
-    if (status !== 'completed') await sleep(PHASE_DELAY_MS);
+  const tmpDir = await mkdtemp(path.join(tmpdir(), 'sbom-'));
+  try {
+    await setStatus(scanId, 'cloning');
+    console.log(`${scanId}: cloning`);
+    await cloneRepo(repoUrl, tmpDir);
+
+    await setStatus(scanId, 'scanning');
+    console.log(`${scanId}: scanning`);
+    const rawJson = await runSyft(tmpDir);
+    const doc = parseCycloneDxDocument(rawJson);
+    await validateCycloneDx(rawJson, doc.specVersion);
+
+    await setStatus(scanId, 'enriching');
+    console.log(`${scanId}: enriching`);
+    await storeComponents(scanId, doc);
+    await query(`UPDATE scans SET raw_output = $2, updated_at = now() WHERE id = $1`, [
+      scanId,
+      rawJson,
+    ]);
+
+    await setStatus(scanId, 'completed');
+    console.log(`${scanId}: completed`);
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
   }
 }
 
@@ -129,4 +269,6 @@ worker.on('failed', async (job, err) => {
 
 worker.on('error', (err) => console.error('worker error:', err));
 
-console.log(`worker listening on queue "${SCAN_QUEUE}" (phase delay ${PHASE_DELAY_MS}ms)`);
+console.log(
+  `worker listening on queue "${SCAN_QUEUE}" (git timeout ${GIT_CLONE_TIMEOUT_MS}ms, syft timeout ${SYFT_TIMEOUT_MS}ms)`,
+);
