@@ -110,7 +110,10 @@ function parseCycloneDxDocument(rawJson: string): CycloneDxDocument {
   return doc;
 }
 
-const SPEC_BY_VERSION: Record<string, {version: string}> = {
+// Values are CycloneDX Spec objects whose `.version` is the library's `Version`
+// enum (not a plain string) -- type the map by the object itself so that enum
+// type survives to the JsonStrictValidator call below.
+const SPEC_BY_VERSION: Record<string, typeof CDX.Spec.Spec1dot6> = {
   '1.2': CDX.Spec.Spec1dot2,
   '1.3': CDX.Spec.Spec1dot3,
   '1.4': CDX.Spec.Spec1dot4,
