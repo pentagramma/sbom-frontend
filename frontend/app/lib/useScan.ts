@@ -8,8 +8,8 @@
 // SCAN_NOT_FOUND. Works identically against the fake and the real API.
 
 import { useEffect, useRef, useState } from "react";
-import type { Scan } from "./scan-api";
-import { getScan, ScanApiError } from "./scan-api";
+import type { Scan, ScanComponentsResponse } from "./scan-api";
+import { getComponents, getScan, ScanApiError } from "./scan-api";
 
 const BACKOFF = [
   { untilMs: 15_000, intervalMs: 3_000 },
@@ -23,8 +23,8 @@ function intervalFor(elapsedMs: number): number {
 
 export type ScanPollState =
   | { status: "loading" }
-  | { status: "polling"; scan: Scan }
-  | { status: "completed"; scan: Scan }
+  | { status: "polling"; scan: Scan; components: ScanComponentsResponse | null }
+  | { status: "completed"; scan: Scan; components: ScanComponentsResponse }
   | { status: "failed"; scan: Scan }
   | { status: "error"; code: string; message: string };
 
@@ -54,7 +54,13 @@ export function useScan(scanId: string | null): ScanPollState {
         if (cancelled) return;
 
         if (scan.status === "completed") {
-          setState({ status: "completed", scan });
+          setState({ status: "polling", scan, components: null });
+
+          const components = await getComponents(scan.id, { page: 1, limit: 50 });
+
+          if (cancelled) return;
+
+          setState({ status: "completed", scan, components });
           return;
         }
 
@@ -63,7 +69,7 @@ export function useScan(scanId: string | null): ScanPollState {
           return;
         }
 
-        setState({ status: "polling", scan });
+        setState({ status: "polling", scan, components: null });
         const elapsed = Date.now() - (startedAt.current ?? Date.now());
         timeoutId = window.setTimeout(poll, intervalFor(elapsed));
       } catch (error) {

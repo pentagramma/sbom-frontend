@@ -6,7 +6,7 @@
 // set NEXT_PUBLIC_API_URL to use the real API, leave it unset for the fake.
 // Switchover on days 11-12 is one env var, zero component changes.
 
-import { fakeCreateScan, fakeGetScan } from "./fake-scan-api";
+import { fakeCreateScan, fakeGetComponents, fakeGetScan } from "./fake-scan-api";
 
 export const SCAN_PROGRESS_STATUSES = [
   "queued",
@@ -30,6 +30,24 @@ export type Scan = {
   error: string | null;
 };
 
+export type ScanComponent = {
+  id: string;
+  name: string;
+  version: string;
+  type: string;
+  purl: string;
+  licenses: string[];
+  direct: boolean;
+};
+
+export type ScanComponentsResponse = {
+  scanId: string;
+  page: number;
+  limit: number;
+  total: number;
+  components: ScanComponent[];
+};
+
 export type CreateScanResponse = {
   id: string;
   status: "queued";
@@ -39,6 +57,11 @@ export type CreateScanResponse = {
 
 export type CreateScanRequest = {
   repoUrl: string;
+};
+
+export type GetComponentsRequest = {
+  page?: number;
+  limit?: number;
 };
 
 export class ScanApiError extends Error {
@@ -105,4 +128,31 @@ export async function getScan(scanId: string): Promise<Scan> {
   }
 
   return (await response.json()) as Scan;
+}
+
+export async function getComponents(
+  scanId: string,
+  options: GetComponentsRequest = {}
+): Promise<ScanComponentsResponse> {
+  const page = options.page ?? 1;
+  const limit = options.limit ?? 50;
+
+  if (!API_BASE) {
+    return fakeGetComponents(scanId, { page, limit });
+  }
+
+  const params = new URLSearchParams({
+    page: String(page),
+    limit: String(limit)
+  });
+
+  const response = await fetch(`${API_BASE}/api/v1/scans/${scanId}/components?${params}`, {
+    headers: AUTH_HEADER
+  });
+
+  if (!response.ok) {
+    return parseError(response);
+  }
+
+  return (await response.json()) as ScanComponentsResponse;
 }
