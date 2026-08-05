@@ -5,6 +5,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { ComponentsTable } from "../../components/ComponentsTable";
 import { ScanProgress } from "../../components/ScanProgress";
 import { useScan } from "../../lib/useScan";
 
@@ -46,11 +47,14 @@ export default function ScanStatusPage() {
         ) : (
           <>
             <ScanProgress scan={state.scan} />
-            {state.status === "completed" ? (
-              <div className="rounded-3xl border border-emerald-400/20 bg-emerald-400/5 p-6 text-sm text-emerald-100">
-                Components table and CycloneDX download land here in days 6-10
-                (GET /scans/:id/components and /export per the contract).
-              </div>
+            {state.scan.status === "completed" ? (
+              state.status === "completed" ? (
+                <ComponentsTable data={state.components} />
+              ) : (
+                <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-sm text-slate-300">
+                  Loading components...
+                </div>
+              )
             ) : null}
           </>
         )}
