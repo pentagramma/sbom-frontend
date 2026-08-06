@@ -4,14 +4,14 @@ This document tracks candidate repositories for the day 21 demo and for correctn
 
 ## Demo candidates
 
-| Repo | URL | Scan time | Components found | Lockfile entries | Delta | Verdict |
-| --- | --- | --- | --- | --- | --- | --- |
-| chalk | https://github.com/chalk/chalk | - | - | - | - | - |
-| axios | https://github.com/axios/axios | - | - | - | - | - |
-| lodash | https://github.com/lodash/lodash | - | - | - | - | - |
-| express | https://github.com/expressjs/express | - | - | - | - | - |
-| vite | https://github.com/vitejs/vite | - | - | - | - | - |
-| prettier | https://github.com/prettier/prettier | - | - | - | - | - |
+| Repo | URL | Scan time | Components found | Lockfile entries | cdxgen | Delta | Verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| chalk | https://github.com/chalk/chalk | - | - | - | - | - | - |
+| axios | https://github.com/axios/axios | - | - | - | - | - | - |
+| lodash | https://github.com/lodash/lodash | - | - | - | - | - | - |
+| express | https://github.com/expressjs/express | - | - | - | - | - | - |
+| vite | https://github.com/vitejs/vite | - | - | - | - | - | - |
+| prettier | https://github.com/prettier/prettier | - | - | - | - | - | - |
 
 Selection criteria: scan completes in under ~2 minutes (fits the demo narration window), enough components to demonstrate pagination, clean scan with no errors, recognizable project name.
 
@@ -26,11 +26,11 @@ This section covers test cases for deliberate failure scenarios during the demo:
 
 ## Torture set
 
-| Repo | URL | What it tests | Scan time | Components found | Lockfile entries | Delta | Verdict |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| babel | https://github.com/babel/babel | Monorepo. Multiple packages with lockfiles in subdirectories. Tests whether Syft finds sub-packages or silently scans only the root. | - | - | - | - | - |
-| next.js | https://github.com/vercel/next.js | Very large dependency tree. Stresses pagination, scan time, memory, and job timeouts. | - | - | - | - | - |
-| sharp | https://github.com/lovell/sharp | Native code. Wraps the libvips C library, so a substantial non-JS dependency exists that never appears in any npm manifest. This is the silent-omission probe. | - | - | - | - | - |
+| Repo | URL | What it tests | Scan time | Components found | Lockfile entries | cdxgen | Delta | Verdict |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| babel | https://github.com/babel/babel | Monorepo. Multiple packages with lockfiles in subdirectories. Tests whether Syft finds sub-packages or silently scans only the root. | - | - | - | - | - | - |
+| next.js | https://github.com/vercel/next.js | Very large dependency tree. Stresses pagination, scan time, memory, and job timeouts. | - | - | - | - | - | - |
+| sharp | https://github.com/lovell/sharp | Native code. Wraps the libvips C library, so a substantial non-JS dependency exists that never appears in any npm manifest. This is the silent-omission probe. | - | - | - | - | - | - |
 
 These repositories are chosen to break things rather than demo well.
 
@@ -40,4 +40,4 @@ Note: Non-JS code in npm packages spans C, C++, and increasingly Rust (via napi-
 
 Syft can silently skip ecosystems, vendored code, and subdirectories it cannot parse - it reports no error, just fewer components. Comparing the component count against the repo's lockfile entry count is how we catch silent omissions. A large negative delta means Syft missed something, and that gap gets documented as a known limitation rather than hidden.
 
-The lockfile count must come from an independent script that walks the cloned repo and finds every package-lock.json including ones in subdirectories. Counting via our own pipeline would defeat the purpose, since a lockfile Syft failed to find is also one it would fail to count.
+The lockfile count must come from an independent script that walks the cloned repo and finds every package-lock.json including ones in subdirectories. Counting via our own pipeline would defeat the purpose, since a lockfile Syft failed to find is also one it would fail to count. cdxgen component count is included as a second opinion to compare against Syft and lockfile results.
