@@ -8,6 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import express from 'express';
+import cors from 'cors';
 import { Queue } from 'bullmq';
 import { query } from '../db/index.js';
 import { newScanId } from '../shared/ids.js';
@@ -16,6 +17,17 @@ import { SCAN_QUEUE, redisConnection, type ScanJobData } from '../shared/queue.j
 
 
 const app = express();
+
+// Allow the frontend (which may be served from a different origin, e.g. a
+// local dev server or a tunnel like ngrok) to call this API. Configure allowed
+// origins via CORS_ORIGIN (comma-separated); defaults to allowing all origins.
+const allowedOrigins = process.env.CORS_ORIGIN?.split(',').map((o) => o.trim());
+app.use(
+  cors({
+    origin: allowedOrigins && allowedOrigins.length > 0 ? allowedOrigins : true,
+  }),
+);
+
 app.use(express.json()); // parse JSON request bodies into req.body
 
 // Our handle to the Redis queue. `.add()` here is picked up by the worker.
@@ -179,6 +191,38 @@ app.get('/api/v1/scans/:id/components', async (req, res) => {
     total,
     components: rows,
   });
+});
+
+// Export the SBOM. Only `cyclonedx` is supported for now (`spdx` is reserved
+// in the contract for later). The raw CycloneDX JSON is exactly what the
+// worker saved to `scans.raw_output` after running Syft, so this is a plain
+// read, not a re-generation.
+app.get('/api/v1/scans/:id/export', async (req, res) => {
+  const { id } = req.params;
+  const format = typeof req.query.format === 'string' ? req.query.format : 'cyclonedx';
+
+  if (format !== 'cyclonedx') {
+    res
+      .status(400)
+      .json(errorBody('UNSUPPORTED_FORMAT', `format must be 'cyclonedx', got '${format}'`));
+    return;
+  }
+
+  const { rows } = await query<Pick<ScanRow, 'status'> & { raw_output: unknown }>(
+    'SELECT status, raw_output FROM scans WHERE id = $1',
+    [id],
+  );
+  if (rows.length === 0) {
+    res.status(404).json(errorBody('SCAN_NOT_FOUND', `No scan with id ${id}`));
+    return;
+  }
+  if (rows[0].status !== 'completed') {
+    res.status(409).json(errorBody('SCAN_NOT_COMPLETE', `Scan ${id} has not completed yet`));
+    return;
+  }
+
+  res.setHeader('Content-Disposition', `attachment; filename="${id}.cyclonedx.json"`);
+  res.json(rows[0].raw_output);
 });
 
 // Catch-all safety net: any error thrown in a handler above ends up here and

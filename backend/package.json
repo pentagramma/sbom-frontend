@@ -14,10 +14,12 @@
     "ajv-formats": "^3.0.1",
     "ajv-formats-draft2019": "^1.6.1",
     "bullmq": "^5.56.0",
+    "cors": "^2.8.6",
     "express": "^5.1.0",
     "pg": "^8.16.0"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/node": "^20.19.0",
     "@types/pg": "^8.15.0",
