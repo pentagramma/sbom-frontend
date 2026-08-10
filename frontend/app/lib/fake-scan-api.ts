@@ -241,3 +241,42 @@ export async function fakeGetComponents(
     components: allComponents.slice(startIndex, startIndex + limit)
   };
 }
+
+// Mirrors the backend export: hands back a CycloneDX JSON document, built here
+// from the same fake components the table shows so the download is coherent
+// with the UI. `format` is validated like the real endpoint.
+export async function fakeExport(
+  scanId: string,
+  format: string
+): Promise<{ blob: Blob; filename: string }> {
+  if (format !== "cyclonedx") {
+    throw new ScanApiError("UNSUPPORTED_FORMAT", `Unsupported export format: ${format}`);
+  }
+
+  const stored = readStoredScan(scanId);
+  const scan = deriveScanSnapshot(scanId, stored);
+
+  if (scan.status !== "completed") {
+    throw new ScanApiError("SCAN_NOT_COMPLETE", "Scan is not completed yet");
+  }
+
+  const document = {
+    bomFormat: "CycloneDX",
+    specVersion: "1.5",
+    version: 1,
+    metadata: {
+      timestamp: new Date().toISOString(),
+      component: { type: "application", name: stored.repoUrl }
+    },
+    components: fakeComponentsForRepo(stored.repoUrl).map((component) => ({
+      type: component.type,
+      name: component.name,
+      version: component.version,
+      purl: component.purl,
+      licenses: component.licenses.map((id) => ({ license: { id } }))
+    }))
+  };
+
+  const blob = new Blob([JSON.stringify(document, null, 2)], { type: "application/json" });
+  return { blob, filename: `${scanId}.cyclonedx.json` };
+}

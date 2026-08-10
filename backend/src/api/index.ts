@@ -181,6 +181,45 @@ app.get('/api/v1/scans/:id/components', async (req, res) => {
   });
 });
 
+// Export the SBOM. The demo's final step: download a valid CycloneDX file.
+// v1 shortcut (per the roadmap): stream back the raw Syft output stored on the
+// scan row, rather than regenerating from the internal tables. `raw_output` is
+// a JSONB column, so pg hands it back as a parsed object — we re-stringify it.
+app.get('/api/v1/scans/:id/export', async (req, res) => {
+  const { id } = req.params;
+
+  // `cyclonedx` is the only format this slice serves; `spdx` is reserved by the
+  // contract but not built, so anything else is a 400 rather than a silent default.
+  const format = req.query.format ?? 'cyclonedx';
+  if (format !== 'cyclonedx') {
+    res
+      .status(400)
+      .json(errorBody('UNSUPPORTED_FORMAT', `Unsupported export format: ${String(format)}`));
+    return;
+  }
+
+  const { rows } = await query<Pick<ScanRow, 'status'> & { raw_output: unknown }>(
+    'SELECT status, raw_output FROM scans WHERE id = $1',
+    [id],
+  );
+  if (rows.length === 0) {
+    res.status(404).json(errorBody('SCAN_NOT_FOUND', `No scan with id ${id}`));
+    return;
+  }
+  // Only completed scans have a stored SBOM; a missing raw_output on a row that
+  // claims completion is treated the same as not-yet-complete.
+  if (rows[0].status !== 'completed' || rows[0].raw_output == null) {
+    res.status(409).json(errorBody('SCAN_NOT_COMPLETE', `Scan ${id} has not completed yet`));
+    return;
+  }
+
+  res
+    .status(200)
+    .type('application/json')
+    .set('Content-Disposition', `attachment; filename="${id}.cyclonedx.json"`)
+    .send(JSON.stringify(rows[0].raw_output));
+});
+
 // Catch-all safety net: any error thrown in a handler above ends up here and
 // becomes a clean 500, instead of crashing the process. (The 4-argument shape
 // is how Express recognises error-handling middleware.)

@@ -110,23 +110,29 @@ function parseCycloneDxDocument(rawJson: string): CycloneDxDocument {
   return doc;
 }
 
-// Values are CycloneDX Spec objects whose `.version` is the library's `Version`
-// enum (not a plain string) -- type the map by the object itself so that enum
-// type survives to the JsonStrictValidator call below.
-const SPEC_BY_VERSION: Record<string, typeof CDX.Spec.Spec1dot6> = {
-  '1.2': CDX.Spec.Spec1dot2,
-  '1.3': CDX.Spec.Spec1dot3,
-  '1.4': CDX.Spec.Spec1dot4,
-  '1.5': CDX.Spec.Spec1dot5,
-  '1.6': CDX.Spec.Spec1dot6,
-};
+// The library's own version-string -> Spec map, so we validate against whatever
+// spec versions the installed library supports without hand-maintaining a list
+// (Syft tracks the latest CycloneDX version, e.g. 1.7, and a hardcoded map
+// silently stops validating the moment Syft moves ahead of it).
+const SPEC_BY_VERSION: Record<string, typeof CDX.Spec.Spec1dot6 | undefined> =
+  CDX.Spec.SpecVersionDict;
 
 // Best-effort validation against the CycloneDX spec using the official
-// library. Deliberately non-fatal: an unrecognized spec version or a missing
-// optional peer dep (ajv) just skips/warns rather than failing the scan.
+// library. Deliberately non-fatal: a missing optional peer dep (ajv) or a
+// genuinely unsupported spec version warns rather than failing the scan -- but
+// it must warn, not silently pass, so "valid CycloneDX" stays a checked claim.
 async function validateCycloneDx(rawJson: string, specVersion: string | undefined): Promise<void> {
-  const spec = specVersion ? SPEC_BY_VERSION[specVersion] : undefined;
-  if (!spec) return;
+  if (!specVersion) {
+    console.warn('CycloneDX validation skipped: document has no specVersion');
+    return;
+  }
+  const spec = SPEC_BY_VERSION[specVersion];
+  if (!spec) {
+    console.warn(
+      `CycloneDX validation skipped: spec version ${specVersion} not supported by the installed library`,
+    );
+    return;
+  }
   try {
     const validator = new CDX.Validation.JsonStrictValidator(spec.version);
     const errors = await validator.validate(rawJson);

@@ -5,7 +5,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { ComponentsTable } from "../../components/ComponentsTable";
+import { ComponentsPanel } from "../../components/ComponentsPanel";
 import { ScanProgress } from "../../components/ScanProgress";
 import { useScan } from "../../lib/useScan";
 
@@ -47,14 +47,8 @@ export default function ScanStatusPage() {
         ) : (
           <>
             <ScanProgress scan={state.scan} />
-            {state.scan.status === "completed" ? (
-              state.status === "completed" ? (
-                <ComponentsTable data={state.components} />
-              ) : (
-                <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-sm text-slate-300">
-                  Loading components...
-                </div>
-              )
+            {state.status === "completed" ? (
+              <ComponentsPanel scanId={state.scan.id} />
             ) : null}
           </>
         )}

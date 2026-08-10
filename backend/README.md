@@ -56,6 +56,21 @@ human-readable `error`. Jobs have a hard 30-minute timeout
 (`SCAN_JOB_TIMEOUT_MS`) and stalled-job detection, so a dead worker never
 leaves a scan stuck in progress.
 
+## Demo-day seed (fallback)
+
+Insert one already-`completed` scan — id `scn_demo0001`, with components and a
+valid CycloneDX `raw_output` — straight into Postgres, so the read path
+(`GET /scans/:id`, `/components`, `/export`) works during a demo without the
+network, git, Syft, or even the worker:
+
+```sh
+# from backend/, with postgres up
+npm run seed        # prints: seeded demo scan scn_demo0001 (8 components) ...
+```
+
+Then open `/scans/scn_demo0001` in the UI. The script is idempotent — re-running
+replaces the demo scan rather than duplicating it.
+
 ## End-to-end proof
 
 Submit a scan:

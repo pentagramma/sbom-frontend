@@ -6,6 +6,7 @@
   "scripts": {
     "api": "tsx src/api/index.ts",
     "worker": "tsx src/worker/index.ts",
+    "seed": "tsx src/db/seed.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

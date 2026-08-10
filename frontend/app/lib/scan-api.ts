@@ -6,7 +6,7 @@
 // set NEXT_PUBLIC_API_URL to use the real API, leave it unset for the fake.
 // Switchover on days 11-12 is one env var, zero component changes.
 
-import { fakeCreateScan, fakeGetComponents, fakeGetScan } from "./fake-scan-api";
+import { fakeCreateScan, fakeExport, fakeGetComponents, fakeGetScan } from "./fake-scan-api";
 
 export const SCAN_PROGRESS_STATUSES = [
   "queued",
@@ -62,6 +62,13 @@ export type CreateScanRequest = {
 export type GetComponentsRequest = {
   page?: number;
   limit?: number;
+};
+
+export type ExportFormat = "cyclonedx";
+
+export type ScanExport = {
+  blob: Blob;
+  filename: string;
 };
 
 export class ScanApiError extends Error {
@@ -155,4 +162,39 @@ export async function getComponents(
   }
 
   return (await response.json()) as ScanComponentsResponse;
+}
+
+// Pull the download filename out of a Content-Disposition header
+// (`attachment; filename="scn_xxx.cyclonedx.json"`), falling back to a
+// contract-shaped default when the header is absent or unparseable.
+function filenameFromResponse(response: Response, scanId: string): string {
+  const disposition = response.headers.get("Content-Disposition");
+  const match = disposition?.match(/filename="?([^";]+)"?/i);
+  return match?.[1] ?? `${scanId}.cyclonedx.json`;
+}
+
+// Download the SBOM as a Blob plus its filename. Returns raw bytes rather than
+// triggering the browser download itself — the DOM side lives in the component,
+// keeping this module free of browser wiring. Fake and real share one signature.
+export async function downloadExport(
+  scanId: string,
+  format: ExportFormat = "cyclonedx"
+): Promise<ScanExport> {
+  if (!API_BASE) {
+    return fakeExport(scanId, format);
+  }
+
+  const params = new URLSearchParams({ format });
+  const response = await fetch(`${API_BASE}/api/v1/scans/${scanId}/export?${params}`, {
+    headers: AUTH_HEADER
+  });
+
+  if (!response.ok) {
+    return parseError(response);
+  }
+
+  return {
+    blob: await response.blob(),
+    filename: filenameFromResponse(response, scanId)
+  };
 }
