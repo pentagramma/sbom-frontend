@@ -6,10 +6,10 @@ This document tracks candidate repositories for the day 21 demo and for correctn
 
 | Repo | URL | Scan time | Components found | Lockfile entries | cdxgen | Delta | Verdict |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| chalk | https://github.com/chalk/chalk | - | - | - | - | - | - |
+| commander | https://github.com/tj/commander.js | - | - | - | - | - | - |
 | axios | https://github.com/axios/axios | - | - | - | - | - | - |
 | lodash | https://github.com/lodash/lodash | - | - | - | - | - | - |
-| express | https://github.com/expressjs/express | - | - | - | - | - | - |
+| zod | https://github.com/colinhacks/zod | - | - | - | - | - | - |
 | vite | https://github.com/vitejs/vite | - | - | - | - | - | - |
 | prettier | https://github.com/prettier/prettier | - | - | - | - | - | - |
 
