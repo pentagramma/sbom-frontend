@@ -43,6 +43,10 @@ export function runCommand(
       },
     );
 
+    if (child.stderr) {
+      child.stderr.pipe(process.stderr);
+    }
+
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill('SIGKILL');
