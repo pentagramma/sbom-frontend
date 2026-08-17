@@ -14,19 +14,18 @@ export default function RepoLookupPage() {
   const router = useRouter();
   const [repoUrl, setRepoUrl] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>({ status: "idle" });
+  const demoMode = !process.env.NEXT_PUBLIC_API_URL;
+  const demoRepoUrl = "https://github.com/expressjs/express";
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const trimmedRepoUrl = repoUrl.trim();
-    if (!trimmedRepoUrl || submitState.status === "submitting") {
+  async function startScan(nextRepoUrl: string) {
+    if (!nextRepoUrl.trim() || submitState.status === "submitting") {
       return;
     }
 
     setSubmitState({ status: "submitting" });
 
     try {
-      const scan = await createScan({ repoUrl: trimmedRepoUrl });
+      const scan = await createScan({ repoUrl: nextRepoUrl.trim() });
       router.push(`/scans/${scan.id}`);
     } catch (error) {
       setSubmitState({
@@ -39,6 +38,11 @@ export default function RepoLookupPage() {
     }
   }
 
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await startScan(repoUrl);
+  }
+
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100">
       <section className="mx-auto flex w-full max-w-3xl flex-col gap-6">
@@ -49,6 +53,13 @@ export default function RepoLookupPage() {
             Paste a GitHub or GitLab repository URL, then start a scan. All status updates come
             from the shared scan API.
           </p>
+
+          {demoMode ? (
+            <p className="mt-3 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-2 text-sm text-amber-100">
+              Demo mode is on. The app uses the in-browser fake API so you can exercise
+              create, status polling, and components without the backend.
+            </p>
+          ) : null}
 
           <form className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-end" onSubmit={handleSubmit}>
             <label className="block flex-1">
@@ -68,6 +79,17 @@ export default function RepoLookupPage() {
               className="h-12 shrink-0 rounded-xl border border-cyan-400/40 bg-cyan-400/10 px-6 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {submitState.status === "submitting" ? "Starting scan..." : "Scan repository"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setRepoUrl(demoRepoUrl);
+                void startScan(demoRepoUrl);
+              }}
+              disabled={submitState.status === "submitting"}
+              className="h-12 shrink-0 rounded-xl border border-white/10 bg-white/5 px-6 text-sm font-semibold text-slate-100 transition hover:border-cyan-400/40 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Run demo scan
             </button>
           </form>
 

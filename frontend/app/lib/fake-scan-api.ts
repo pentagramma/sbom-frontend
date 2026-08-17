@@ -13,6 +13,9 @@
 import type {
   CreateScanRequest,
   CreateScanResponse,
+  ExportFormat,
+  ExportScanRequest,
+  ExportScanResponse,
   GetComponentsRequest,
   Scan,
   ScanComponent,
@@ -192,6 +195,35 @@ function fakeComponentsForRepo(repoUrl: string): ScanComponent[] {
   return GENERIC_COMPONENTS;
 }
 
+function fakeCycloneDxExport(scanId: string, repoUrl: string, createdAt: string) {
+  const components = fakeComponentsForRepo(repoUrl);
+
+  return {
+    bomFormat: "CycloneDX",
+    specVersion: "1.5",
+    serialNumber: `urn:uuid:${crypto.randomUUID()}`,
+    version: 1,
+    metadata: {
+      timestamp: createdAt,
+      component: {
+        type: "application",
+        name: repoUrl,
+        bomRef: scanId
+      }
+    },
+    components: components.map((component) => ({
+      type: component.type,
+      name: component.name,
+      version: component.version,
+      purl: component.purl,
+      licenses: component.licenses.map((license) => ({
+        license: { id: license }
+      })),
+      bomRef: component.id
+    }))
+  };
+}
+
 export async function fakeCreateScan({
   repoUrl
 }: CreateScanRequest): Promise<CreateScanResponse> {
@@ -239,5 +271,34 @@ export async function fakeGetComponents(
     limit,
     total: allComponents.length,
     components: allComponents.slice(startIndex, startIndex + limit)
+  };
+}
+
+export async function fakeExportScan(
+  scanId: string,
+  options: ExportScanRequest = {}
+): Promise<ExportScanResponse> {
+  const stored = readStoredScan(scanId);
+  const scan = deriveScanSnapshot(scanId, stored);
+  const format: ExportFormat = options.format ?? "cyclonedx";
+
+  if (format !== "cyclonedx") {
+    throw new ScanApiError("UNSUPPORTED_FORMAT", `format must be 'cyclonedx', got '${format}'`);
+  }
+
+  if (scan.status !== "completed") {
+    throw new ScanApiError("SCAN_NOT_COMPLETE", "Scan is not completed yet");
+  }
+
+  const body = JSON.stringify(
+    fakeCycloneDxExport(scanId, stored.repoUrl, stored.createdAt),
+    null,
+    2
+  );
+
+  return {
+    filename: `${scanId}.cyclonedx.json`,
+    contentType: "application/json",
+    body
   };
 }
