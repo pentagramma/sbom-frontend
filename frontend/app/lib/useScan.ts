@@ -56,7 +56,7 @@ export function useScan(scanId: string | null): ScanPollState {
         if (scan.status === "completed") {
           setState({ status: "polling", scan, components: null });
 
-          const components = await getComponents(scan.id, { page: 1, limit: 50 });
+          const components = await getComponents(scan.id, { page: 2, limit: 2 });
 
           if (cancelled) return;
 

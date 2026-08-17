@@ -3,15 +3,63 @@
 // /scans/:id — live scan status. The id lives in the URL (per the contract,
 // this page must rebuild from a refresh), the polling hook does the rest.
 
+import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ComponentsTable } from "../../components/ComponentsTable";
 import { ScanProgress } from "../../components/ScanProgress";
 import { useScan } from "../../lib/useScan";
+import { exportScan, ScanApiError } from "../../lib/scan-api";
+
+function ExportIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+      <path
+        d="M12 3v10m0 0 4-4m-4 4-4-4M5 15v2.5A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5V15"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 export default function ScanStatusPage() {
   const params = useParams<{ id: string }>();
   const state = useScan(params.id ?? null);
+  const demoMode = !process.env.NEXT_PUBLIC_API_URL;
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  async function handleExport() {
+    if (state.status !== "completed") {
+      return;
+    }
+
+    setIsExporting(true);
+    setExportError(null);
+
+    try {
+      const exported = await exportScan(state.scan.id, { format: "cyclonedx" });
+      const blob = new Blob([exported.body], { type: exported.contentType });
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = exported.filename;
+      link.rel = "noopener";
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      if (error instanceof ScanApiError) {
+        setExportError(error.message);
+      } else {
+        setExportError("Failed to export SBOM.");
+      }
+    } finally {
+      setIsExporting(false);
+    }
+  }
 
   return (
     <main className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100">
@@ -28,6 +76,12 @@ export default function ScanStatusPage() {
             Scan another repository
           </Link>
         </header>
+
+        {demoMode ? (
+          <div className="rounded-3xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-100">
+            Demo mode is active, so this scan is using the in-browser fake API.
+          </div>
+        ) : null}
 
         {state.status === "loading" ? (
           <div className="rounded-3xl border border-white/10 bg-white/5 p-8 text-slate-300">
@@ -49,7 +103,33 @@ export default function ScanStatusPage() {
             <ScanProgress scan={state.scan} />
             {state.scan.status === "completed" ? (
               state.status === "completed" ? (
-                <ComponentsTable data={state.components} />
+                <div className="space-y-4">
+                  <ComponentsTable data={state.components} />
+                  <div className="flex flex-col gap-3 rounded-3xl border border-white/10 bg-white/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-slate-100">Export SBOM</p>
+                      <p className="text-sm text-slate-400">
+                        Download the completed CycloneDX document for this scan.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleExport}
+                      disabled={isExporting}
+                      className="inline-flex items-center justify-center rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-medium text-cyan-100 transition hover:border-cyan-300/50 hover:bg-cyan-400/15 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <span className="mr-2">
+                        <ExportIcon />
+                      </span>
+                      {isExporting ? "Exporting..." : "Export SBOM"}
+                    </button>
+                  </div>
+                  {exportError ? (
+                    <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-100">
+                      {exportError}
+                    </div>
+                  ) : null}
+                </div>
               ) : (
                 <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-sm text-slate-300">
                   Loading components...

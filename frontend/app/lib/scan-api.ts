@@ -1,12 +1,17 @@
 // Scan API client, typed to docs/mvp-api-contract-v1.md. Every shape here is
 // copied from the contract — if the contract changes, this file changes with it.
 //
-// The UI only ever talks to `createScan` / `getScan`. Whether the data comes
-// from the real backend or the in-browser fake is decided by env:
+// The UI only ever talks to the functions below. Whether the data comes from
+// the real backend or the in-browser fake is decided by env:
 // set NEXT_PUBLIC_API_URL to use the real API, leave it unset for the fake.
 // Switchover on days 11-12 is one env var, zero component changes.
 
-import { fakeCreateScan, fakeGetComponents, fakeGetScan } from "./fake-scan-api";
+import {
+  fakeCreateScan,
+  fakeExportScan,
+  fakeGetComponents,
+  fakeGetScan
+} from "./fake-scan-api";
 
 export const SCAN_PROGRESS_STATUSES = [
   "queued",
@@ -62,6 +67,18 @@ export type CreateScanRequest = {
 export type GetComponentsRequest = {
   page?: number;
   limit?: number;
+};
+
+export type ExportFormat = "cyclonedx";
+
+export type ExportScanRequest = {
+  format?: ExportFormat;
+};
+
+export type ExportScanResponse = {
+  filename: string;
+  contentType: string;
+  body: string;
 };
 
 export class ScanApiError extends Error {
@@ -155,4 +172,42 @@ export async function getComponents(
   }
 
   return (await response.json()) as ScanComponentsResponse;
+}
+
+function filenameFromContentDisposition(header: string | null): string | null {
+  if (!header) {
+    return null;
+  }
+
+  const filenameMatch = header.match(/filename="([^"]+)"/i);
+
+  return filenameMatch?.[1] ?? null;
+}
+
+export async function exportScan(
+  scanId: string,
+  options: ExportScanRequest = {}
+): Promise<ExportScanResponse> {
+  const format = options.format ?? "cyclonedx";
+
+  if (!API_BASE) {
+    return fakeExportScan(scanId, { format });
+  }
+
+  const params = new URLSearchParams({ format });
+  const response = await fetch(`${API_BASE}/api/v1/scans/${scanId}/export?${params}`, {
+    headers: AUTH_HEADER
+  });
+
+  if (!response.ok) {
+    return parseError(response);
+  }
+
+  return {
+    filename:
+      filenameFromContentDisposition(response.headers.get("content-disposition")) ??
+      `${scanId}.${format}.json`,
+    contentType: response.headers.get("content-type") ?? "application/json",
+    body: await response.text()
+  };
 }
