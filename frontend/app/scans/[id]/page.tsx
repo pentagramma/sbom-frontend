@@ -7,8 +7,10 @@ import { useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ComponentsTable } from "../../components/ComponentsTable";
+import { ComponentsPagination } from "../../components/ComponentsPagination";
 import { ScanProgress } from "../../components/ScanProgress";
 import { useScan } from "../../lib/useScan";
+import { useScanComponents } from "../../lib/useScanComponents";
 import { exportScan, ScanApiError } from "../../lib/scan-api";
 
 function ExportIcon() {
@@ -29,8 +31,17 @@ export default function ScanStatusPage() {
   const params = useParams<{ id: string }>();
   const state = useScan(params.id ?? null);
   const demoMode = !process.env.NEXT_PUBLIC_API_URL;
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(2);
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const scanIsComplete = state.status === "completed";
+  const componentsState = useScanComponents(
+    scanIsComplete ? state.scan.id : null,
+    scanIsComplete,
+    page,
+    limit
+  );
 
   async function handleExport() {
     if (state.status !== "completed") {
@@ -102,9 +113,16 @@ export default function ScanStatusPage() {
           <>
             <ScanProgress scan={state.scan} />
             {state.scan.status === "completed" ? (
-              state.status === "completed" ? (
+              componentsState.status === "loading" || componentsState.status === "idle" ? (
+                <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-sm text-slate-300">
+                  Loading components...
+                </div>
+              ) : componentsState.status === "error" ? (
+                <div className="rounded-3xl border border-red-500/20 bg-red-500/10 p-6 text-sm text-red-100">
+                  {componentsState.message}
+                </div>
+              ) : (
                 <div className="space-y-4">
-                  <ComponentsTable data={state.components} />
                   <div className="flex flex-col gap-3 rounded-3xl border border-white/10 bg-white/5 p-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="text-sm font-medium text-slate-100">Export SBOM</p>
@@ -124,15 +142,25 @@ export default function ScanStatusPage() {
                       {isExporting ? "Exporting..." : "Export SBOM"}
                     </button>
                   </div>
+
                   {exportError ? (
                     <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-4 text-sm text-red-100">
                       {exportError}
                     </div>
                   ) : null}
-                </div>
-              ) : (
-                <div className="rounded-3xl border border-white/10 bg-white/5 p-6 text-sm text-slate-300">
-                  Loading components...
+
+                  <ComponentsTable data={componentsState.components} />
+
+                  <ComponentsPagination
+                    page={page}
+                    limit={limit}
+                    total={componentsState.components.total}
+                    onPageChange={setPage}
+                    onLimitChange={(nextLimit) => {
+                      setPage(1);
+                      setLimit(nextLimit);
+                    }}
+                  />
                 </div>
               )
             ) : null}
