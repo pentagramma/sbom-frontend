@@ -112,13 +112,3 @@ CERT-In's Technical Guidelines v2.0 and its 21 minimum data fields remain our co
 Separately, CERT-In co-signed an international minimum-elements baseline published in July 2026 alongside CISA, BSI, ANSSI and others. Our 21-field work covers its component-level requirements. We are tracking it in case CERT-In revises its own guidelines to align.
 
 Useful in a sales conversation: building to CERT-In's list is the harder target, so clearing it clears the international baseline on component data as well.
-
-----------
-
-## Open items
-
-Decisions and verifications owned at the architecture level, not by the engineering team:
-
--   Terms under which the vulnerability database can be redistributed to on-prem customers. Business question, needs answering before on-prem packaging is scoped.
--   Vulnerability data freshness in disconnected environments. Air-gapped customers run whatever was last synced manually. This is a product limitation to state up front, not a bug.
--   Whether to accept already-built artifacts (JAR, WAR) as scan inputs in addition to repositories. Would sidestep part of the Java build-step problem.
