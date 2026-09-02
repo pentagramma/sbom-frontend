@@ -24,6 +24,7 @@ import { runCommand, ExecTimeoutError } from './exec.js';
 
 
 const GIT_CLONE_TIMEOUT_MS = Number(process.env.GIT_CLONE_TIMEOUT_MS ?? 60_000);
+const NPM_INSTALL_TIMEOUT_MS = Number(process.env.NPM_INSTALL_TIMEOUT_MS ?? 60_000);
 const SYFT_TIMEOUT_MS = Number(process.env.SYFT_TIMEOUT_MS ?? 120_000);
 
 // Two kinds of failure exist. A `ScanError` carries a message we are happy to
@@ -58,13 +59,76 @@ async function cloneRepo(repoUrl: string, destDir: string): Promise<void> {
   }
 }
 
+// If the cloned repo has a package.json but no lock file, generate one so
+// Syft's javascript-lock-cataloger can find npm packages. Non-fatal: if npm
+// isn't available or the install fails, we log and continue -- Syft will still
+// catalog whatever else it can find.
+// Walks the full tree so monorepos with nested package.json files are covered.
+
+// On Windows, `npm` is a .cmd batch script that execFile can't spawn directly.
+// We work around this by invoking npm's JS entry point via the node binary,
+// which is a real executable on all platforms.
+// On Linux/Mac, npm is a real binary so we call it directly.
+function resolveNpmCommand(): { cmd: string; prefixArgs: string[] } {
+  if (process.platform === 'win32') {
+    const npmCli = path.join(
+      path.dirname(process.execPath),
+      'node_modules', 'npm', 'bin', 'npm-cli.js',
+    );
+    return { cmd: process.execPath, prefixArgs: [npmCli] };
+  }
+  return { cmd: 'npm', prefixArgs: [] };
+}
+
+async function tryGenerateLockfile(dir: string): Promise<void> {
+  const { readdir } = await import('node:fs/promises');
+  const { cmd, prefixArgs } = resolveNpmCommand();
+  const npmArgs = [...prefixArgs, 'install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'];
+
+
+  async function walk(current: string): Promise<void> {
+    let entries;
+    try {
+      entries = await readdir(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    const names = new Set(entries.filter(e => e.isFile()).map(e => e.name));
+
+    const hasLockFile = names.has('package-lock.json')
+      || names.has('yarn.lock')
+      || names.has('pnpm-lock.yaml')
+      || names.has('bun.lockb');
+
+    if (names.has('package.json') && !hasLockFile) {
+      try {
+        await runCommand(cmd, npmArgs, { timeoutMs: NPM_INSTALL_TIMEOUT_MS, cwd: current });
+        console.log(`lock file generated: ${path.relative(dir, current).replace(/\\/g, '/') || '.'}/package.json`);
+      } catch (err) {
+        console.warn(`lock file generation failed at ${path.relative(dir, current).replace(/\\/g, '/') || '.'}/package.json (Syft will scan without it) -- ${(err as Error).message}`);
+      }
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name === 'node_modules' || entry.name === '.git') continue;
+      await walk(path.join(current, entry.name));
+    }
+  }
+
+  await walk(dir);
+}
+
 // Runs Syft against the cloned directory, returning the raw CycloneDX JSON
 // text. Own timeout, independent of the git clone and job timeouts.
 async function runSyft(dir: string): Promise<string> {
   try {
-    const { stdout } = await runCommand('syft', [dir, '-o', 'cyclonedx-json'], {
-      timeoutMs: SYFT_TIMEOUT_MS,
-    });
+    const { stdout } = await runCommand(
+      'syft',
+      [dir, '-o', 'cyclonedx-json', '-vv'],
+      { timeoutMs: SYFT_TIMEOUT_MS },
+    );
     return stdout;
   } catch (err) {
     if (err instanceof ExecTimeoutError) {
@@ -205,6 +269,7 @@ async function processScan(job: Job<ScanJobData>): Promise<void> {
     await setStatus(scanId, 'cloning');
     console.log(`${scanId}: cloning`);
     await cloneRepo(repoUrl, tmpDir);
+    await tryGenerateLockfile(tmpDir);
 
     await setStatus(scanId, 'scanning');
     console.log(`${scanId}: scanning`);
